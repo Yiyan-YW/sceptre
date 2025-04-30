@@ -983,8 +983,190 @@ plot_response_grna_target_pair <- function(sceptre_object, response_id, grna_tar
 
   # obtain the p-value (if available); deal with the singleton situation
   p_val <- 1.5
-  df_list <- list(if (functs_called[["run_power_check"]]) sceptre_object@power_result else NULL,
-                  if (functs_called[["run_discovery_analysis"]]) sceptre_object@discovery_result else NULL) |>
+  df_list <- list(
+    if (functs_called[["run_power_check"]]) sceptre_object@power_result else NULL,
+    if (functs_called[["run_discovery_analysis"]]) sceptre_object@discovery_result else NULL
+  ) |>
+    purrr::compact()
+  for (curr_df in df_list) {
+    if (singleton_integration_strategy) {
+      subset_result <- curr_df |>
+        dplyr::filter(response_id == !!response_id, grna_id == !!grna_target)
+    } else {
+      subset_result <- curr_df |>
+        dplyr::filter(response_id == !!response_id, grna_target == !!grna_target)
+    }
+    if (nrow(subset_result) >= 1) {
+      p_val <- subset_result$p_value
+      if (is.na(p_val)) p_val <- 1
+    }
+  }
+
+  # obtain the annotation
+  annotation <- cut(p_val,
+    breaks = c(2, 1, 10^(-seq(2, 10)), 0),
+    labels = c(paste0("p <= 10^{", seq(-10, -2), "}"), "p > 0.01", "")
+  ) |> as.character()
+  # create the plot
+  set.seed(4)
+  to_plot_downsample <- to_plot |>
+    dplyr::mutate(is_zero = (normalized_count == 0)) |>
+    dplyr::group_by(is_zero, treatment) |>
+    dplyr::sample_n(size = min(dplyr::n(), 1000))
+  p_out <- ggplot2::ggplot(data = to_plot, mapping = ggplot2::aes(x = treatment, y = normalized_count, col = treatment)) +
+    ggplot2::geom_violin(draw_quantiles = 0.5, linewidth = 0.6) +
+    ggplot2::geom_jitter(data = to_plot_downsample, alpha = 0.1, size = 0.5) +
+    get_my_theme() +
+    ggplot2::theme(legend.position = "none") +
+    ggplot2::scale_color_manual(values = c("dodgerblue4", "firebrick4")) +
+    ggplot2::xlab("Treatment status") +
+    ggplot2::ylab("Normalized expression") +
+    ggplot2::annotate("text", x = 1.5, y = max(to_plot$normalized_count) + 0.5, label = annotation, parse = TRUE) +
+    ggplot2::scale_y_continuous(expand = c(0.0, 0.1), limits = c(-0.01, max(to_plot$normalized_count) + 0.7)) +
+    ggplot2::ggtitle(paste0("Response: ", response_id, "\ngRNA", if (singleton_integration_strategy) "" else " target", ": ", grna_target)) +
+    ggplot2::theme(plot.title = ggplot2::element_text(size = 10))
+
+  return(p_out)
+}
+
+#' Plot response-gRNA-target pair
+#'
+#' `plot_response_grna_target_pair()` creates a violin plot of the expression level of a given response as a function of the "treatment status" (i.e., treatment or control) of a given gRNA target. The left (resp., right) violin plot shows the expression level of the response in treatment (resp., control) cells. The expression level is normalized by dividing by `n_response_umis`, adding a pseudo-count of 1 and then taking the log transform. If the given response-gRNA-target pair has been analyzed, the p-value for the test of association also is displayed.
+#'
+#' If `grna_integration_strategy` is set to `"singleton"`, then `grna_target` should be set to a gRNA ID.
+#' @param sceptre_object a `sceptre_object` that has had `run_qc()` called on it
+#' @param response_id a string containing a response ID
+#' @param grna_target a string containing a gRNA target (or, if `grna_integration_strategy` is set to `"singleton"`, an individual gRNA ID)
+#'
+#' @return a violin plot
+#' @export
+#' @examples
+#' data(highmoi_example_data)
+#' data(grna_target_data_frame_highmoi)
+#' # import data
+#' sceptre_object <- import_data(
+#'   response_matrix = highmoi_example_data$response_matrix,
+#'   grna_matrix = highmoi_example_data$grna_matrix,
+#'   grna_target_data_frame = grna_target_data_frame_highmoi,
+#'   moi = "high",
+#'   extra_covariates = highmoi_example_data$extra_covariates,
+#'   response_names = highmoi_example_data$gene_names
+#' )
+#' discovery_pairs <- construct_cis_pairs(sceptre_object)
+#' sceptre_object |>
+#'   set_analysis_parameters(
+#'     side = "left",
+#'     discovery_pairs = discovery_pairs,
+#'     resampling_mechanism = "permutations",
+#'   ) |>
+#'   assign_grnas(method = "thresholding") |>
+#'   run_qc() |>
+#'   run_discovery_analysis(
+#'     parallel = TRUE,
+#'     n_processors = 2
+#'   ) |>
+#'   plot_response_grna_target_pair(
+#'     response_id = "ENSG00000211641",
+#'     grna_target = "candidate_enh_15"
+#'   )
+plot_response_grna_target_pair_custom <- function(
+    sceptre_object, response_id, grna_target,
+    downsample = FALSE, control_group = NULL, control_cells = NULL) {
+  # check that grnas have been assigned and qc has been called
+  functs_called <- sceptre_object@functs_called
+  singleton_integration_strategy <- sceptre_object@grna_integration_strategy == "singleton"
+  if (!functs_called[["assign_grnas"]]) {
+    stop("`assign_grnas()` must be called on the `sceptre_object`.")
+  }
+  if (!functs_called[["run_qc"]]) {
+    stop("`run_qc()` must be called on the `sceptre_object`.")
+  }
+
+  # get grna integration strategy, control group
+  control_group_complement <- sceptre_object@control_group_complement
+  cells_in_use <- sceptre_object@cells_in_use
+
+  # check that grna_target is present in grna_assignments
+  grna_group_idxs <- sceptre_object@grna_assignments$grna_group_idxs
+  grna_group_names <- names(grna_group_idxs)
+  if (!grna_target %in% grna_group_names) {
+    stop(if (singleton_integration_strategy) "gRNA ID" else "gRNA target `", grna_target, "` is not present within the data.")
+  }
+
+  # check that the response is present within the data
+  response_matrix <- get_response_matrix(sceptre_object)
+
+  # extract the counts for this pair; filter for cells in use
+  y <- load_row(mat = response_matrix, id = response_id)[cells_in_use]
+
+  # get the sequencing depths; filter for cells in use
+  response_n_umis <- sceptre_object@covariate_data_frame$response_n_umis[cells_in_use]
+
+  # compute the normalized counts
+  normalized_counts <- log(10000 * y / response_n_umis + 1)
+
+  # check if there is expression
+  if (all(normalized_counts == 0)) {
+    warning("Response `", response_id, "` has no expression. Returning an empty plot to preserve layout in downstream cowplot.")
+    return(ggplot2::ggplot() +
+      ggplot2::theme_void())
+  }
+
+  # get the treated cells and control cells
+  trt_cells <- normalized_counts[grna_group_idxs[[grna_target]]]
+
+  if (is.null(control_cells)) {
+    if (is.null(control_group)) {
+      if (control_group_complement) { # complement set
+        cntrl_cells <- normalized_counts[-grna_group_idxs[[grna_target]]]
+      } else { # nt cells
+        nt_idxs <- sceptre_object@grna_assignments$all_nt_idxs
+        cntrl_cells <- normalized_counts[nt_idxs]
+      }
+    } else {
+      stop("Control group `", control_group, "` is not recognized.")
+    }
+  } else {
+    # use index to find the control cells
+    cntrl_cells <- normalized_counts[control_cells]
+  }
+
+  # count the number of cells in the control group
+  if (downsample == TRUE) {
+    target_cell_number <- min(
+      length(trt_cells),
+      length(cntrl_cells)
+    )
+
+    # Downsample both groups to the target cell number
+    set.seed(123)
+    trt_cells <- sample(trt_cells, target_cell_number, replace = FALSE)
+    cntrl_cells <- sample(cntrl_cells, target_cell_number, replace = FALSE)
+  }
+
+  # construct the data frame to plot
+  to_plot <- data.frame(
+    normalized_count = c(trt_cells, cntrl_cells),
+    treatment = c(
+      rep("Treatment", length(trt_cells)),
+      rep("Control", length(cntrl_cells))
+    ) |>
+      factor(levels = c("Treatment", "Control"))
+  )
+
+  # check if there is expression
+  if (all(to_plot$normalized_count == 0)) {
+    warning("Response `", response_id, "` has no expression in the treatment and control groups. Returning an empty plot to preserve layout in downstream cowplot.")
+    return(ggplot2::ggplot() +
+      ggplot2::theme_void())
+  }
+
+  # obtain the p-value (if available); deal with the singleton situation
+  p_val <- 1.5
+  df_list <- list(
+    if (functs_called[["run_power_check"]]) sceptre_object@power_result else NULL,
+    if (functs_called[["run_discovery_analysis"]]) sceptre_object@discovery_result else NULL
+  ) |>
     purrr::compact()
   for (curr_df in df_list) {
     if (singleton_integration_strategy) {
