@@ -1133,8 +1133,8 @@ plot_response_grna_target_pair_custom <- function(
   }
 
   if (keep_NAs == FALSE) {
-    trt_cells <- trt_cells[!is.na(trt_cells)]
-    cntrl_cells <- cntrl_cells[!is.na(cntrl_cells)]
+    trt_cells <- trt_cells[trt_cells != 0]
+    cntrl_cells <- cntrl_cells[cntrl_cells != 0]
   }
 
   # count the number of cells in the control group
