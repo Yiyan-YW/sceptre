@@ -1071,7 +1071,7 @@ plot_response_grna_target_pair <- function(sceptre_object, response_id, grna_tar
 #'   )
 plot_response_grna_target_pair_custom <- function(
     sceptre_object, response_id, grna_target,
-    downsample = FALSE, keep_NAs = TRUE,
+    downsample = FALSE, keep_zeros = TRUE,
     control_group = NULL, control_cells = NULL) {
   # check that grnas have been assigned and qc has been called
   functs_called <- sceptre_object@functs_called
@@ -1132,7 +1132,7 @@ plot_response_grna_target_pair_custom <- function(
     cntrl_cells <- normalized_counts[control_cells]
   }
 
-  if (keep_NAs == FALSE) {
+  if (keep_zeros == FALSE) {
     trt_cells <- trt_cells[trt_cells != 0]
     cntrl_cells <- cntrl_cells[cntrl_cells != 0]
   }
