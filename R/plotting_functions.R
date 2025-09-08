@@ -1071,7 +1071,8 @@ plot_response_grna_target_pair <- function(sceptre_object, response_id, grna_tar
 #'   )
 plot_response_grna_target_pair_custom <- function(
     sceptre_object, response_id, grna_target,
-    downsample = FALSE, control_group = NULL, control_cells = NULL) {
+    downsample = FALSE, keep_NAs = TRUE,
+    control_group = NULL, control_cells = NULL) {
   # check that grnas have been assigned and qc has been called
   functs_called <- sceptre_object@functs_called
   singleton_integration_strategy <- sceptre_object@grna_integration_strategy == "singleton"
@@ -1129,6 +1130,11 @@ plot_response_grna_target_pair_custom <- function(
   } else {
     # use index to find the control cells
     cntrl_cells <- normalized_counts[control_cells]
+  }
+
+  if (keep_NAs == FALSE) {
+    trt_cells <- trt_cells[!is.na(trt_cells)]
+    cntrl_cells <- cntrl_cells[!is.na(cntrl_cells)]
   }
 
   # count the number of cells in the control group
